@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "description": "Forwards video player errors from the embed iframe to the parent window via postMessage, enabling external error handling for embedded PeerTube players.",
   "homepage": "https://github.com/appinteractive/peertube-plugin-embed-error-events",
-  "author": "Grzegorz Leoniec",
+  "author": {
+    "name": "Grzegorz Leoniec",
+    "url": "https://github.com/appinteractive"
+  },
   "license": "AGPL-3.0",
   "bugs": "https://github.com/appinteractive/peertube-plugin-embed-error-events/issues",
   "engine": {
