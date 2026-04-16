@@ -1,0 +1,11 @@
+.git/
+.gitignore
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+*.swp
+*.swo
+*~
+*.tgz
