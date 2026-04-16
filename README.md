@@ -41,7 +41,7 @@ This is a known limitation tracked in upstream PeerTube issues:
 
 ```bash
 # Authenticate first (one-time)
-peertube-cli auth add -u 'https://your-peertube-instance.com' -U 'admin_user' --password 'password'
+peertube-cli auth add -u 'https://your-peertube-instance.com' -U 'admin_user'
 
 # Install the plugin (dynamic, no restart needed)
 peertube-cli plugins install --npm-name peertube-plugin-embed-error-events
