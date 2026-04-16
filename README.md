@@ -1,4 +1,4 @@
-# peertube-plugin-embed-error-events
+# PeerTube Plugin: Embed Error Events
 
 Forwards video player errors from the PeerTube embed iframe to the parent window via `postMessage`. Enables external error handling for embedded PeerTube players.
 
