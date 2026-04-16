@@ -33,60 +33,18 @@ This is a known limitation tracked in upstream PeerTube issues:
 
 ## Installation
 
-### Option A: Install via npm (recommended for PeerTube Admin UI)
+### Admin UI (recommended)
+
+**Administration** > **Plugins/Themes** > **Search** > search for `peertube-plugin-embed-error-events` > **Install**.
+
+### CLI
 
 ```bash
-npm publish  # or publish to your private registry
-```
-
-Then in PeerTube Admin UI: **Administration** > **Plugins/Themes** > **Search** > search for `peertube-plugin-embed-error-events` > **Install**.
-
-### Option B: Install from local path via CLI
-
-```bash
-# Copy plugin to server
-scp -r peertube-plugin-embed-error-events \
-  user@your-server:/tmp/peertube-plugin-embed-error-events
-
-# On the server
-sudo mv /tmp/peertube-plugin-embed-error-events \
-  /var/www/peertube/storage/plugins/node_modules/peertube-plugin-embed-error-events
-sudo chown -R peertube:peertube \
-  /var/www/peertube/storage/plugins/node_modules/peertube-plugin-embed-error-events
-
-# Register the plugin
 cd /var/www/peertube/peertube-latest
 sudo -u peertube NODE_CONFIG_DIR=/var/www/peertube/config \
   NODE_ENV=production \
   npx peertube plugins:install \
-  --path /var/www/peertube/storage/plugins/node_modules/peertube-plugin-embed-error-events
-
-# Restart PeerTube
-sudo systemctl restart peertube
-```
-
-### Option C: Install via REST API
-
-```bash
-PEERTUBE_URL="https://your-peertube-instance.com"
-
-# Get OAuth credentials
-CLIENT_INFO=$(curl -s "$PEERTUBE_URL/api/v1/oauth-clients/local")
-CLIENT_ID=$(echo "$CLIENT_INFO" | jq -r '.client_id')
-CLIENT_SECRET=$(echo "$CLIENT_INFO" | jq -r '.client_secret')
-
-TOKEN=$(curl -s "$PEERTUBE_URL/api/v1/users/token" \
-  -d "client_id=$CLIENT_ID" \
-  -d "client_secret=$CLIENT_SECRET" \
-  -d "grant_type=password" \
-  -d "username=root" \
-  -d "password=YOUR_ADMIN_PASSWORD" | jq -r '.access_token')
-
-# Install from local path on the server
-curl -s -X POST "$PEERTUBE_URL/api/v1/plugins/install" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/path/to/peertube-plugin-embed-error-events"}'
+  --npm-name peertube-plugin-embed-error-events
 ```
 
 ## Usage
@@ -190,18 +148,11 @@ To test error forwarding, trigger an error:
 
 **CLI**:
 ```bash
+cd /var/www/peertube/peertube-latest
 sudo -u peertube NODE_CONFIG_DIR=/var/www/peertube/config \
   NODE_ENV=production \
   npx peertube plugins:uninstall \
   --npm-name peertube-plugin-embed-error-events
-```
-
-**API**:
-```bash
-curl -s -X POST "$PEERTUBE_URL/api/v1/plugins/uninstall" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"npmName": "peertube-plugin-embed-error-events"}'
 ```
 
 ## Troubleshooting
