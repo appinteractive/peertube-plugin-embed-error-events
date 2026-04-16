@@ -40,12 +40,14 @@ This is a known limitation tracked in upstream PeerTube issues:
 ### CLI
 
 ```bash
-cd /var/www/peertube/peertube-latest
-sudo -u peertube NODE_CONFIG_DIR=/var/www/peertube/config \
-  NODE_ENV=production \
-  npx peertube plugins:install \
-  --npm-name peertube-plugin-embed-error-events
+# Authenticate first (one-time)
+peertube-cli auth add -u 'https://your-peertube-instance.com' -U 'admin_user' --password 'password'
+
+# Install the plugin (dynamic, no restart needed)
+peertube-cli plugins install --npm-name peertube-plugin-embed-error-events
 ```
+
+Requires `@peertube/peertube-cli` (`sudo npm install -g @peertube/peertube-cli`).
 
 ## Usage
 
@@ -148,11 +150,7 @@ To test error forwarding, trigger an error:
 
 **CLI**:
 ```bash
-cd /var/www/peertube/peertube-latest
-sudo -u peertube NODE_CONFIG_DIR=/var/www/peertube/config \
-  NODE_ENV=production \
-  npx peertube plugins:uninstall \
-  --npm-name peertube-plugin-embed-error-events
+peertube-cli plugins uninstall --npm-name peertube-plugin-embed-error-events
 ```
 
 ## Troubleshooting
