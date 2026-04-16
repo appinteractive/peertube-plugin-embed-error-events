@@ -11,6 +11,11 @@ This is a known limitation tracked in upstream PeerTube issues:
 - [PeerTube#468](https://github.com/Chocobozzz/PeerTube/issues/468) -- requesting error events (open since 2019)
 - [PeerTube#2522](https://github.com/Chocobozzz/PeerTube/issues/2522) -- `player.ready()` hangs forever with no error signal
 
+### Use Cases
+
+- **Custom player UI on top of the embed API** -- If you build your own controls, overlay, or player chrome around the PeerTube embed iframe, you need error events to show error states, retry buttons, or fallback content. Without this plugin your UI stays in a "playing" state while the iframe shows an error.
+- **Video monitoring and analytics** -- Track playback failures across your PeerTube instance or a fleet of embeds to identify broken videos, infrastructure issues, or transcoding problems.
+- **Third-party integrations** -- LMS platforms, digital signage, or kiosk apps that embed PeerTube videos can detect failures and react (e.g. skip to the next video, alert an operator).
 ### Errors that go undetected without this plugin
 
 | Error | What happens | User sees |
