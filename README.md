@@ -162,6 +162,10 @@ peertube-cli plugins uninstall --npm-name peertube-plugin-embed-error-events
 | `HLS.js instance not found` log | Normal for web-video mode (non-HLS); Video.js error handler still catches fatal errors |
 | `postMessage failed` log | Parent and iframe are on different origins with restrictive CSP |
 
+## Development
+
+See [docs/docker-plugin-development.md](docs/docker-plugin-development.md) for the local Docker-based plugin development workflow.
+
 ## License
 
 AGPL-3.0 (same as PeerTube)
