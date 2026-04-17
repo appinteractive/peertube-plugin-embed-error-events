@@ -2,7 +2,7 @@
 
 A guide for developing and debugging this plugin with a Docker Compose PeerTube setup.
 
-The key insight is that server-side plugin code is dynamically reloaded by `plugin:install` — you don't need to restart the container on every change.
+Most code changes (hooks, client scripts) are picked up by re-running `plugin:install`. Some changes (notably `registerSetting`) also need a container restart — see [Iterating](#iterating) below.
 
 ## Setup
 
@@ -32,8 +32,43 @@ docker compose exec -u peertube peertube npm run plugin:install -- --plugin-path
 
 ## Iterating
 
-- **Server-side changes** (`main.js`): Re-run the same `plugin:install` command — plugins are dynamically loaded, no container restart needed.
 - **Client-side changes** (`client/embed.js`): Re-run `plugin:install`, then hard refresh the browser (Cmd+Shift+R / Ctrl+Shift+R).
+- **Server-side logic changes** (hooks, routes in `main.js`): Re-run `plugin:install` — usually picked up dynamically.
+- **`registerSetting` changes**: Re-run `plugin:install` AND restart the container. PeerTube's plugin manager caches the setting registration; a restart forces `register()` to run again.
+
+### Gotcha: pnpm caches `file:` dependencies
+
+When installing from a mounted path, pnpm may keep a stale copy in `node_modules` even after your source changes. If your changes don't show up, clear the cache and reinstall:
+
+```bash
+docker compose exec peertube sh -c 'rm -rf /data/plugins/node_modules/peertube-plugin-embed-error-events /data/plugins/node_modules/.pnpm/peertube-plugin-embed-error-events*'
+docker compose exec -u peertube peertube npm run plugin:install -- --plugin-path /plugin-dev/peertube-plugin-embed-error-events
+```
+
+### Gotcha: stale plugin directory outside `node_modules`
+
+If you ever copied plugin files directly to `/data/plugins/peertube-plugin-<name>/` (outside `node_modules/`), that directory can shadow the properly installed version. Remove it:
+
+```bash
+docker compose exec peertube rm -rf /data/plugins/peertube-plugin-embed-error-events
+```
+
+### Verify what PeerTube actually loaded
+
+Check the file PeerTube will load:
+
+```bash
+docker compose exec peertube cat /data/plugins/node_modules/peertube-plugin-embed-error-events/main.js
+```
+
+Check registered settings via API (requires auth token):
+
+```bash
+curl -s "http://localhost:9090/api/v1/plugins/peertube-plugin-embed-error-events/registered-settings" \
+  -H "Authorization: Bearer <token>"
+```
+
+An empty `registeredSettings: []` means `register()` didn't get your latest changes — try the pnpm cache clear and a container restart.
 
 ## Debugging
 
