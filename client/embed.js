@@ -151,6 +151,11 @@ async function register({ registerHook }) {
       // the native <video> element for audio ops (verified to unmute on Safari).
       function resolvePlayer() {
         if (hookPlayer && typeof hookPlayer.muted === 'function') return hookPlayer
+        // The embed also exposes the player as window.videojsPlayer (see PeerTube
+        // embed.ts) — a stable handle independent of the hook param shape.
+        try {
+          if (window.videojsPlayer && typeof window.videojsPlayer.muted === 'function') return window.videojsPlayer
+        } catch (_) {}
         try {
           if (videojs && typeof videojs.getAllPlayers === 'function') {
             var arr = videojs.getAllPlayers()
