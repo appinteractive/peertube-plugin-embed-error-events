@@ -12,10 +12,6 @@
  *       // error.fatal, error.type, error.details, error.message, ...
  *     }
  *   })
- *
- * Debug stats can be requested by the parent page:
- *   iframe.contentWindow.postMessage(JSON.stringify({method: "peertube::debug:start"}), "*")
- *   iframe.contentWindow.postMessage(JSON.stringify({method: "peertube::debug:stop"}), "*")
  */
 
 async function register({ registerHook }) {
@@ -88,8 +84,8 @@ async function register({ registerHook }) {
       }
 
       // --- 3. HLS.js errors (best-effort — provides detailed error types) ---
-      var hls = null
       try {
+        var hls = null
         var tech = videojs.tech({ IWillNotUseThisInPlugins: true })
 
         // PeerTube uses p2p-media-loader which wraps HLS.js.
@@ -144,107 +140,6 @@ async function register({ registerHook }) {
           message: 'Browser back online',
           videoId: video.uuid || ''
         })
-      })
-
-      // --- 5. Debug stats (on-demand, parent requests start/stop) ---
-      var debugInterval = null
-
-      function collectStats() {
-        var stats = {
-          timestamp: Date.now(),
-          videoId: video.uuid || '',
-          hls: null,
-          video: null,
-          player: null
-        }
-
-        // HLS.js stats
-        try {
-          if (hls && typeof hls.currentLevel === 'number') {
-            var levels = []
-            if (hls.levels && hls.levels.length) {
-              for (var i = 0; i < hls.levels.length; i++) {
-                var l = hls.levels[i]
-                levels.push({
-                  height: l.height || 0,
-                  width: l.width || 0,
-                  bitrate: l.bitrate || 0
-                })
-              }
-            }
-            stats.hls = {
-              currentLevel: hls.currentLevel,
-              autoLevelEnabled: hls.autoLevelEnabled !== false,
-              nextAutoLevel: typeof hls.nextAutoLevel === 'number' ? hls.nextAutoLevel : -1,
-              levels: levels,
-              bandwidthEstimate: hls.bandwidthEstimate || 0
-            }
-          }
-        } catch (_) {}
-
-        // Video element stats
-        try {
-          var el = videoEl || (videojs.el && videojs.el() && videojs.el().querySelector('video'))
-          if (el) {
-            var bufferedRanges = []
-            if (el.buffered) {
-              for (var j = 0; j < el.buffered.length; j++) {
-                bufferedRanges.push({
-                  start: el.buffered.start(j),
-                  end: el.buffered.end(j)
-                })
-              }
-            }
-            stats.video = {
-              currentTime: el.currentTime || 0,
-              duration: el.duration || 0,
-              videoWidth: el.videoWidth || 0,
-              videoHeight: el.videoHeight || 0,
-              networkState: el.networkState,
-              readyState: el.readyState,
-              bufferedRanges: bufferedRanges,
-              paused: el.paused,
-              ended: el.ended
-            }
-          }
-        } catch (_) {}
-
-        // Player stats
-        try {
-          stats.player = {
-            playbackRate: videojs.playbackRate() || 1,
-            volume: videojs.volume() || 0
-          }
-        } catch (_) {}
-
-        return stats
-      }
-
-      window.addEventListener('message', function (event) {
-        try {
-          var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-          if (!data || !data.method) return
-
-          if (data.method === scope + '::debug:start') {
-            if (debugInterval) clearInterval(debugInterval)
-            debugInterval = setInterval(function () {
-              notifyParent(scope + '::debug:stats', collectStats())
-            }, 1000)
-            // Send one immediately
-            notifyParent(scope + '::debug:stats', collectStats())
-            console.debug('[embed-error-events] Debug stats streaming started')
-          }
-
-          if (data.method === scope + '::debug:stop') {
-            if (debugInterval) {
-              clearInterval(debugInterval)
-              debugInterval = null
-            }
-            console.debug('[embed-error-events] Debug stats streaming stopped')
-          }
-        } catch (_) {
-          // Not JSON or malformed — ignore
-        }
       })
 
       console.debug('[embed-error-events] Error forwarding active for video:', video.uuid)
