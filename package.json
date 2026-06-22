@@ -23,6 +23,15 @@
     "video",
     "player"
   ],
+  "scripts": {
+    "lint": "eslint .",
+    "test": "echo \"No tests yet — add some under a test/ directory\" && exit 0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.16.0",
+    "eslint": "^9.16.0",
+    "globals": "^15.13.0"
+  },
   "library": "./main.js",
   "staticDirs": {},
   "css": [],
