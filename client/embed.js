@@ -17,7 +17,7 @@
 async function register({ registerHook }) {
   registerHook({
     target: 'action:embed.player.loaded',
-    handler: function ({ videojs, video }) {
+    handler: function ({ player: hookPlayer, videojs, video }) {
       var scope = new URLSearchParams(window.location.search).get('scope') || 'peertube'
 
       /**
@@ -146,17 +146,59 @@ async function register({ registerHook }) {
       })
 
       // --- 5. Player control commands (parent -> iframe) ---
+      // NOTE: the hook's `videojs` arg is the video.js LIBRARY, not the player —
+      // it has no .muted()/.volume()/.tech(). Resolve the real player; fall back to
+      // the native <video> element for audio ops (verified to unmute on Safari).
+      function resolvePlayer() {
+        if (hookPlayer && typeof hookPlayer.muted === 'function') return hookPlayer
+        // The embed also exposes the player as window.videojsPlayer (see PeerTube
+        // embed.ts) — a stable handle independent of the hook param shape.
+        try {
+          if (window.videojsPlayer && typeof window.videojsPlayer.muted === 'function') return window.videojsPlayer
+        } catch (_) {}
+        try {
+          if (videojs && typeof videojs.getAllPlayers === 'function') {
+            var arr = videojs.getAllPlayers()
+            if (arr && arr[0]) return arr[0]
+          }
+        } catch (_) {}
+        try {
+          if (videojs && videojs.players) {
+            for (var id in videojs.players) {
+              if (videojs.players[id]) return videojs.players[id]
+            }
+          }
+        } catch (_) {}
+        return null
+      }
+
+      var player = resolvePlayer()
+      var mediaEl = document.querySelector('video')
+
+      function isMuted() {
+        try { if (player && typeof player.muted === 'function') return !!player.muted() } catch (_) {}
+        return mediaEl ? !!mediaEl.muted : false
+      }
+      function getVolume() {
+        try { if (player && typeof player.volume === 'function') return player.volume() } catch (_) {}
+        return mediaEl ? mediaEl.volume : 1
+      }
+      // Set BOTH the player (keeps video.js state in sync) and the native element
+      // (the lever proven to work on Safari) so the change sticks.
+      function setMuted(m) {
+        try { if (player && typeof player.muted === 'function') player.muted(m) } catch (_) {}
+        if (mediaEl) mediaEl.muted = m
+      }
+
       function emitState() {
         try {
-          var muted = !!videojs.muted()
-          var vol = typeof videojs.volume === 'function' ? videojs.volume() : 1
+          var muted = isMuted()
           notifyParent(scope + '::state', {
             muted: muted,
-            // Report the *effective* level: 0 while muted. The host's model treats
-            // volume===0 as muted, so this keeps the player UI and host state in sync
-            // even at the autoplay-muted start (where muted=true but volume=1).
-            volume: muted ? 0 : vol,
-            fullscreen: typeof videojs.isFullscreen === 'function' ? videojs.isFullscreen() : false
+            // Effective level: 0 while muted, so the host (which treats volume===0
+            // as muted) stays in sync even at the autoplay-muted start.
+            volume: muted ? 0 : getVolume(),
+            fullscreen: !!(document.fullscreenElement || document.webkitFullscreenElement)
           })
         } catch (_) {}
       }
@@ -165,21 +207,32 @@ async function register({ registerHook }) {
       // volume to 0 mutes the embed. Unmuting stays command-driven (handleCommand
       // 'unmute') so we never fight Safari by re-unmuting in a volumechange loop.
       function syncMutedToVolume() {
-        try {
-          if (videojs.volume() === 0 && !videojs.muted()) videojs.muted(true)
-        } catch (_) {}
+        try { if (getVolume() === 0 && !isMuted()) setMuted(true) } catch (_) {}
+      }
+
+      // Desktop uses player/native requestFullscreen; iOS Safari needs the native
+      // <video> presentation mode.
+      function requestFullscreen() {
+        if (player && typeof player.requestFullscreen === 'function') player.requestFullscreen()
+        else if (mediaEl && mediaEl.requestFullscreen) mediaEl.requestFullscreen()
+        else if (mediaEl && mediaEl.webkitEnterFullscreen) mediaEl.webkitEnterFullscreen()
+      }
+      function exitFullscreen() {
+        if (player && typeof player.exitFullscreen === 'function') player.exitFullscreen()
+        else if (document.exitFullscreen) document.exitFullscreen()
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
       }
 
       function handleCommand(action) {
         try {
           switch (action) {
-            case 'mute':       videojs.muted(true); break
-            case 'unmute':     videojs.muted(false); break
-            case 'toggleMute': videojs.muted(!videojs.muted()); break
+            case 'mute':       setMuted(true); break
+            case 'unmute':     setMuted(false); break
+            case 'toggleMute': setMuted(!isMuted()); break
             case 'enterFullscreen': requestFullscreen(); break
-            case 'exitFullscreen':  videojs.exitFullscreen && videojs.exitFullscreen(); break
+            case 'exitFullscreen':  exitFullscreen(); break
             case 'toggleFullscreen':
-              if (videojs.isFullscreen && videojs.isFullscreen()) videojs.exitFullscreen()
+              if (document.fullscreenElement || document.webkitFullscreenElement) exitFullscreen()
               else requestFullscreen()
               break
             default: return
@@ -190,21 +243,13 @@ async function register({ registerHook }) {
         emitState()
       }
 
-      // Desktop uses video.js requestFullscreen; iOS Safari has no Fullscreen API
-      // on arbitrary elements, so fall back to the native <video> presentation.
-      function requestFullscreen() {
-        if (videojs.requestFullscreen) {
-          videojs.requestFullscreen()
-        } else if (videoEl && videoEl.webkitEnterFullscreen) {
-          videoEl.webkitEnterFullscreen()
-        }
+      // Listen on the native element/document so events fire regardless of the
+      // video.js wrapper, and couple mute->volume.
+      if (mediaEl) {
+        mediaEl.addEventListener('volumechange', function () { syncMutedToVolume(); emitState() })
       }
-
-      // Keep the host UI in sync with player-driven changes, and couple mute->volume.
-      try {
-        videojs.on('volumechange', function () { syncMutedToVolume(); emitState() })
-        videojs.on('fullscreenchange', emitState)
-      } catch (_) {}
+      document.addEventListener('fullscreenchange', emitState)
+      document.addEventListener('webkitfullscreenchange', emitState)
 
       // Accept commands from the parent. Origin is intentionally not validated here
       // (mute/fullscreen aren't sensitive, matching the existing ::error channel).
