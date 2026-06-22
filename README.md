@@ -113,6 +113,46 @@ Messages use the jschannel notification format (same structure the PeerTube embe
 | `httpStatus` | `number?` | HTTP status code (HLS.js network errors only) |
 | `code` | `number?` | MediaError code (Video.js/native errors only) |
 
+## Player Control (mute / unmute / fullscreen)
+
+Beyond error events, the plugin opens a **parent → iframe command channel** so the
+host page can drive player state the official `@peertube/embed-api` cannot reach.
+The embed API exposes only `setVolume`/`getVolume` and has no way to clear the
+`muted` flag, so on Safari's autoplay-muted start the public API cannot un-mute the
+player. Running inside the iframe, this plugin can.
+
+Send a command from the parent page:
+
+```javascript
+iframe.contentWindow.postMessage(JSON.stringify({
+  method: 'peertube::command',
+  params: { action: 'unmute' }
+}), '*')
+```
+
+| `action` | Effect |
+|---|---|
+| `mute` | Mute the player |
+| `unmute` | Un-mute the player (restores audio on Safari) |
+| `toggleMute` | Toggle muted state |
+| `enterFullscreen` | Request fullscreen (iOS native `<video>` fallback) |
+| `exitFullscreen` | Exit fullscreen |
+| `toggleFullscreen` | Toggle fullscreen |
+
+The plugin emits the ground-truth state on load, after every command, and on
+`volumechange`/`fullscreenchange`, so the host can sync its UI:
+
+```json
+{
+  "method": "peertube::state",
+  "params": { "muted": false, "volume": 1, "fullscreen": false }
+}
+```
+
+`volume` is the **effective** level -- reported as `0` while `muted` is true. See
+[docs/player-control-api.md](docs/player-control-api.md) for the full protocol,
+Safari/iOS notes, and origin-allowlist guidance.
+
 ## How It Works
 
 The plugin registers on the `action:embed.player.loaded` hook and attaches error listeners at multiple layers:
@@ -121,8 +161,9 @@ The plugin registers on the `action:embed.player.loaded` hook and attaches error
 2. **Native `<video>` element errors** -- fallback for errors Video.js doesn't catch (with deduplication)
 3. **HLS.js errors** -- direct access via `tech.hlsjs` or `tech.hls` for detailed error types and non-fatal warnings
 4. **Browser online/offline** -- network state changes
+5. **Player control commands** -- listens for `::command` messages from the parent and emits `::state` updates
 
-All errors are forwarded to `window.parent.postMessage()` in jschannel format.
+Errors and state are forwarded to `window.parent.postMessage()` in jschannel format.
 
 ## Verification
 
