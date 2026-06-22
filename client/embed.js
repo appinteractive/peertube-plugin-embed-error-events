@@ -25,14 +25,13 @@ async function register({ registerHook }) {
        * notification format (same structure the PeerTube embed SDK uses for
        * playbackStatusUpdate, volumeChange, etc.).
        */
-      function notifyParent(errorData) {
+      function notifyParent(method, data) {
         try {
           window.parent.postMessage(JSON.stringify({
-            method: scope + '::error',
-            params: errorData
+            method: method,
+            params: data
           }), '*')
         } catch (e) {
-          // postMessage can fail if parent is cross-origin restricted
           console.debug('[embed-error-events] postMessage failed:', e.message)
         }
       }
@@ -45,7 +44,7 @@ async function register({ registerHook }) {
           var err = videojs.error()
           if (!err) return
 
-          notifyParent({
+          notifyParent(scope + '::error', {
             fatal: true,
             type: 'media',
             code: err.code,
@@ -73,7 +72,7 @@ async function register({ registerHook }) {
             // videojs.error() may not be available
           }
 
-          notifyParent({
+          notifyParent(scope + '::error', {
             fatal: true,
             type: 'media',
             code: err.code,
@@ -86,12 +85,11 @@ async function register({ registerHook }) {
 
       // --- 3. HLS.js errors (best-effort — provides detailed error types) ---
       try {
+        var hls = null
         var tech = videojs.tech({ IWillNotUseThisInPlugins: true })
 
         // PeerTube uses p2p-media-loader which wraps HLS.js.
         // Try multiple access paths to find the HLS.js instance.
-        var hls = null
-
         if (tech && tech.hlsjs) {
           hls = tech.hlsjs
         } else if (tech && tech.hls) {
@@ -104,7 +102,7 @@ async function register({ registerHook }) {
         if (hls && typeof hls.on === 'function') {
           // HLS.js events — Hls.Events.ERROR = 'hlsError'
           hls.on('hlsError', function (_event, data) {
-            notifyParent({
+            notifyParent(scope + '::error', {
               fatal: !!data.fatal,
               type: data.type || 'unknown',
               details: data.details || '',
@@ -125,7 +123,7 @@ async function register({ registerHook }) {
 
       // --- 4. Network state (online/offline) ---
       window.addEventListener('offline', function () {
-        notifyParent({
+        notifyParent(scope + '::error', {
           fatal: false,
           type: 'network',
           details: 'offline',
@@ -135,7 +133,7 @@ async function register({ registerHook }) {
       })
 
       window.addEventListener('online', function () {
-        notifyParent({
+        notifyParent(scope + '::error', {
           fatal: false,
           type: 'recovery',
           details: 'online',
