@@ -7,7 +7,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 // The package is CommonJS (main.js) and the client script is an ES module
-// without a .mjs extension, so load it as a data: module (works on Node 20).
+// without a .mjs extension; load it as a data: module instead of relying on
+// Node's ESM syntax detection.
 const source = await readFile(new URL('../client/embed.js', import.meta.url), 'utf8')
 const { register } = await import('data:text/javascript,' + encodeURIComponent(source))
 
