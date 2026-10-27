@@ -69,9 +69,16 @@ async function register({ registerHook }) {
       // PeerTube gives up after repeated HLS load failures (e.g. an expired file
       // token) and reports it here as MEDIA_ERR_NETWORK.
       try {
+        // PeerTube triggers its give-up error more than once; forward it once
+        // per failure (a later failure after playback resumed is new).
+        var lastForwarded = null
+        player.on('playing', function () { lastForwarded = null })
         player.on('error', function () {
           var err = player.error()
           if (!err) return
+          var key = err.code + ':' + (err.message || '')
+          if (key === lastForwarded) return
+          lastForwarded = key
 
           notifyParent(scope + '::error', {
             fatal: true,
@@ -92,10 +99,12 @@ async function register({ registerHook }) {
           var err = mediaEl.error
           if (!err) return
 
-          // Avoid duplicate if video.js already caught this
+          // Video.js already reported the failure. The element error that follows
+          // is a consequence (PeerTube tears the source down → "Format error",
+          // which a host would read as an unplayable video).
           try {
             var vjsErr = player && player.error()
-            if (vjsErr && vjsErr.code === err.code) return
+            if (vjsErr) return
           } catch (_) {
             // videojs.error() may not be available
           }
