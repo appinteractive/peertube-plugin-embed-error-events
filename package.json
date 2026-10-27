@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "lint": "eslint .",
-    "test": "echo \"No tests yet — add some under a test/ directory\" && exit 0"
+    "test": "node --test"
   },
   "devDependencies": {
     "@eslint/js": "^9.16.0",

@@ -24,6 +24,16 @@ export default [
     }
   },
 
+  // Tests — Node's built-in runner, no browser.
+  {
+    files: ['test/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node }
+    }
+  },
+
   // Shared rule tweaks. The embed script uses intentional empty `catch (_) {}`
   // guards and `_`-prefixed placeholder args; allow those instead of rewriting code.
   {
