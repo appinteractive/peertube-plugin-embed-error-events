@@ -60,7 +60,7 @@ let doc
 beforeEach(() => {
   sent = []
   win = Object.assign(emitter(), {
-    location: { search: '?api=1' },
+    location: { search: '?api=1&errorEvents=1' },
     parent: { postMessage: (message) => sent.push(JSON.parse(message)) }
   })
   doc = Object.assign(emitter(), { querySelector: () => null, fullscreenElement: null })
@@ -194,7 +194,7 @@ test('survives a missing player and still forwards offline/online', () => {
 })
 
 test('uses the scope from the embed URL', () => {
-  win.location.search = '?api=1&scope=custom'
+  win.location.search = '?api=1&scope=custom&errorEvents=1'
   const player = fakePlayer()
   load({ player })
   player.fail(2, 'gave up')
@@ -215,4 +215,52 @@ test('reports the initial audio state and applies mute commands', () => {
 
   win.emit('message', { data: JSON.stringify({ method: 'other::command', params: { action: 'unmute' } }) })
   assert.equal(player.muted(), true)
+})
+
+
+test('forwards no errors without errorEvents=1, still reports state and takes commands', () => {
+  win.location.search = '?api=1'
+  const player = fakePlayer()
+  load({ player })
+  player.fail(2, 'gave up')
+  player.hls.emit('hlsError', 'hlsError', { type: 'networkError', details: 'fragLoadError' })
+  player.recover()
+  player.mediaEl.error = { code: 3 }
+  player.mediaEl.emit('error')
+  win.emit('offline')
+  win.emit('online')
+  assert.equal(errors().length, 0)
+  assert.ok(sent.some(m => m.method === 'peertube::state'))
+  win.emit('message', { data: { method: 'peertube::command', params: { action: 'mute' } } })
+  assert.equal(player.muted(), true)
+})
+
+test('a second hook run labels one player error with the new video', () => {
+  const player = fakePlayer()
+  load({ player })
+  load({ player, video: { uuid: 'video-2' } })
+  player.fail(2, 'gave up')
+  assert.deepEqual(errors().map(e => e.videoId), ['video-2'])
+})
+
+test('a second hook run forwards each HLS.js error once', () => {
+  const player = fakePlayer()
+  load({ player })
+  load({ player, video: { uuid: 'video-2' } })
+  player.hls.emit('hlsError', 'hlsError', { type: 'networkError', details: 'fragLoadError' })
+  assert.deepEqual(errors().map(e => [e.details, e.videoId]), [['fragLoadError', 'video-2']])
+})
+
+test('a second hook run sends one state per command using the current player', () => {
+  const first = fakePlayer()
+  load({ player: first })
+  const player = fakePlayer()
+  load({ player, video: { uuid: 'video-2' } })
+  sent = []
+  win.emit('message', { data: { method: 'peertube::command', params: { action: 'mute' } } })
+  assert.equal(first.muted(), false)
+  assert.equal(player.muted(), true)
+  assert.equal(sent.filter(m => m.method === 'peertube::state').length, 1)
+  player.fail(2, 'gave up')
+  assert.equal(errors()[0].videoId, 'video-2')
 })

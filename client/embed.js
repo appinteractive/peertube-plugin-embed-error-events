@@ -33,18 +33,28 @@ function findHls(player) {
   return null
 }
 
+const registrations = new WeakMap()
+
 async function register({ registerHook }) {
   registerHook({
     target: 'action:embed.player.loaded',
     handler: function ({ player: hookPlayer, videojs, video }) {
-      var scope = new URLSearchParams(window.location.search).get('scope') || 'peertube'
+      var params = new URLSearchParams(window.location.search)
+      var errorEvents = params.get('errorEvents') === '1'
+      var state = registrations.get(window)
+      if (!state) {
+        state = { wiredPlayers: new WeakSet(), wiredMediaEls: new WeakSet(), wiredHls: new WeakSet(), windowWired: false }
+        registrations.set(window, state)
+      }
+      state.scope = params.get('scope') || 'peertube'
+      state.videoId = video.uuid || ''
 
       /**
        * Send a notification to the parent window using the jschannel
        * notification format (same structure the PeerTube embed SDK uses for
        * playbackStatusUpdate, volumeChange, etc.).
        *
-       * @param {string} method - fully-qualified method, e.g. scope + '::error'
+       * @param {string} method - fully-qualified method, e.g. state.scope + '::error'
        * @param {object} params - notification payload
        */
       function notifyParent(method, params) {
@@ -65,36 +75,45 @@ async function register({ registerHook }) {
       var mediaEl = (player && typeof player.el === 'function' && player.el() && player.el().querySelector('video')) ||
         document.querySelector('video')
 
+      state.player = player
+      state.mediaEl = mediaEl
+
       // --- 1. Video.js player errors (catches all fatal errors including HLS.js bubbled-up) ---
       // PeerTube gives up after repeated HLS load failures (e.g. an expired file
       // token) and reports it here as MEDIA_ERR_NETWORK.
-      try {
-        // PeerTube triggers its give-up error more than once; forward it once
-        // per failure (a later failure after playback resumed is new).
-        var lastForwarded = null
-        player.on('playing', function () { lastForwarded = null })
-        player.on('error', function () {
-          var err = player.error()
-          if (!err) return
-          var key = err.code + ':' + (err.message || '')
-          if (key === lastForwarded) return
-          lastForwarded = key
-
-          notifyParent(scope + '::error', {
-            fatal: true,
-            type: 'media',
-            code: err.code,
-            message: err.message || '',
-            details: 'MEDIA_ERR_' + err.code,
-            videoId: video.uuid || ''
+      if (errorEvents && player && !state.wiredPlayers.has(player)) {
+        state.wiredPlayers.add(player)
+        try {
+          // PeerTube triggers its give-up error more than once; forward it once
+          // per failure (a later failure after playback resumed is new).
+          var lastForwarded = null
+          player.on('playing', function () { lastForwarded = null })
+          player.on('hlsjs-initialized', function (_event, data) {
+            forwardHlsErrors((data && data.hlsjs) || findHls(player))
           })
-        })
-      } catch (e) {
-        console.debug('[embed-error-events] player.on("error") not supported, using native fallback:', e.message)
+          player.on('error', function () {
+            var err = player.error()
+            if (!err) return
+            var key = err.code + ':' + (err.message || '')
+            if (key === lastForwarded) return
+            lastForwarded = key
+
+            notifyParent(state.scope + '::error', {
+              fatal: true,
+              type: 'media',
+              code: err.code,
+              message: err.message || '',
+              details: 'MEDIA_ERR_' + err.code,
+              videoId: state.videoId
+            })
+          })
+        } catch (e) {
+          console.debug('[embed-error-events] player.on("error") not supported, using native fallback:', e.message)
+        }
       }
 
       // --- 2. Native <video> element errors (fallback for errors video.js doesn't catch) ---
-      if (mediaEl) {
+      if (errorEvents && mediaEl && !state.wiredMediaEls.has(mediaEl)) {
         mediaEl.addEventListener('error', function () {
           var err = mediaEl.error
           if (!err) return
@@ -109,13 +128,13 @@ async function register({ registerHook }) {
             // videojs.error() may not be available
           }
 
-          notifyParent(scope + '::error', {
+          notifyParent(state.scope + '::error', {
             fatal: true,
             type: 'media',
             code: err.code,
             message: err.message || '',
             details: 'VIDEO_ERR_' + err.code,
-            videoId: video.uuid || ''
+            videoId: state.videoId
           })
         })
       }
@@ -123,55 +142,56 @@ async function register({ registerHook }) {
       // --- 3. HLS.js errors (best-effort — provides detailed error types) ---
       // PeerTube usually creates HLS.js after this hook ran (and again for a new
       // source), announcing it with `hlsjs-initialized`; attach to each instance once.
-      var hlsInstances = []
       function forwardHlsErrors(hls) {
-        if (!hls || typeof hls.on !== 'function' || hlsInstances.indexOf(hls) !== -1) return
-        hlsInstances.push(hls)
+        if (!hls || typeof hls.on !== 'function' || state.wiredHls.has(hls)) return
+        state.wiredHls.add(hls)
         // HLS.js events — Hls.Events.ERROR = 'hlsError'
         hls.on('hlsError', function (_event, data) {
-          notifyParent(scope + '::error', {
+          notifyParent(state.scope + '::error', {
             fatal: !!data.fatal,
             type: data.type || 'unknown',
             details: data.details || '',
             message: (data.reason || (data.error && data.error.message) || ''),
             url: data.url || '',
             httpStatus: (data.response && data.response.code) || null,
-            videoId: video.uuid || ''
+            videoId: state.videoId
           })
         })
         console.debug('[embed-error-events] HLS.js error forwarding active')
       }
 
-      try {
-        forwardHlsErrors(findHls(player))
-        player.on('hlsjs-initialized', function (_event, data) {
-          forwardHlsErrors((data && data.hlsjs) || findHls(player))
-        })
-      } catch (e) {
-        // No player or tech access (web-video mode, etc.)
-        console.debug('[embed-error-events] Could not access HLS.js:', e.message)
+      if (errorEvents) {
+        try {
+          forwardHlsErrors(findHls(player))
+
+        } catch (e) {
+          // No player or tech access (web-video mode, etc.)
+          console.debug('[embed-error-events] Could not access HLS.js:', e.message)
+        }
       }
 
       // --- 4. Network state (online/offline) ---
-      window.addEventListener('offline', function () {
-        notifyParent(scope + '::error', {
-          fatal: false,
-          type: 'network',
-          details: 'offline',
-          message: 'Browser went offline',
-          videoId: video.uuid || ''
+      if (errorEvents && !state.windowWired) {
+        window.addEventListener('offline', function () {
+          notifyParent(state.scope + '::error', {
+            fatal: false,
+            type: 'network',
+            details: 'offline',
+            message: 'Browser went offline',
+            videoId: state.videoId
+          })
         })
-      })
 
-      window.addEventListener('online', function () {
-        notifyParent(scope + '::error', {
-          fatal: false,
-          type: 'recovery',
-          details: 'online',
-          message: 'Browser back online',
-          videoId: video.uuid || ''
+        window.addEventListener('online', function () {
+          notifyParent(state.scope + '::error', {
+            fatal: false,
+            type: 'recovery',
+            details: 'online',
+            message: 'Browser back online',
+            videoId: state.videoId
+          })
         })
-      })
+      }
 
       // --- 5. Player control commands (parent -> iframe) ---
       // Audio ops fall back to the native <video> element (verified to unmute on Safari).
@@ -199,24 +219,24 @@ async function register({ registerHook }) {
       }
 
       function isMuted() {
-        try { if (player && typeof player.muted === 'function') return !!player.muted() } catch (_) {}
-        return mediaEl ? !!mediaEl.muted : false
+        try { if (state.player && typeof state.player.muted === 'function') return !!state.player.muted() } catch (_) {}
+        return state.mediaEl ? !!state.mediaEl.muted : false
       }
       function getVolume() {
-        try { if (player && typeof player.volume === 'function') return player.volume() } catch (_) {}
-        return mediaEl ? mediaEl.volume : 1
+        try { if (state.player && typeof state.player.volume === 'function') return state.player.volume() } catch (_) {}
+        return state.mediaEl ? state.mediaEl.volume : 1
       }
       // Set BOTH the player (keeps video.js state in sync) and the native element
       // (the lever proven to work on Safari) so the change sticks.
       function setMuted(m) {
-        try { if (player && typeof player.muted === 'function') player.muted(m) } catch (_) {}
-        if (mediaEl) mediaEl.muted = m
+        try { if (state.player && typeof state.player.muted === 'function') state.player.muted(m) } catch (_) {}
+        if (state.mediaEl) state.mediaEl.muted = m
       }
 
       function emitState() {
         try {
           var muted = isMuted()
-          notifyParent(scope + '::state', {
+          notifyParent(state.scope + '::state', {
             muted: muted,
             // Effective level: 0 while muted, so the host (which treats volume===0
             // as muted) stays in sync even at the autoplay-muted start.
@@ -236,12 +256,12 @@ async function register({ registerHook }) {
       // Desktop uses player/native requestFullscreen; iOS Safari needs the native
       // <video> presentation mode.
       function requestFullscreen() {
-        if (player && typeof player.requestFullscreen === 'function') player.requestFullscreen()
-        else if (mediaEl && mediaEl.requestFullscreen) mediaEl.requestFullscreen()
-        else if (mediaEl && mediaEl.webkitEnterFullscreen) mediaEl.webkitEnterFullscreen()
+        if (state.player && typeof state.player.requestFullscreen === 'function') state.player.requestFullscreen()
+        else if (state.mediaEl && state.mediaEl.requestFullscreen) state.mediaEl.requestFullscreen()
+        else if (state.mediaEl && state.mediaEl.webkitEnterFullscreen) state.mediaEl.webkitEnterFullscreen()
       }
       function exitFullscreen() {
-        if (player && typeof player.exitFullscreen === 'function') player.exitFullscreen()
+        if (state.player && typeof state.player.exitFullscreen === 'function') state.player.exitFullscreen()
         else if (document.exitFullscreen) document.exitFullscreen()
         else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
       }
@@ -268,34 +288,39 @@ async function register({ registerHook }) {
 
       // Listen on the native element/document so events fire regardless of the
       // video.js wrapper, and couple mute->volume.
-      if (mediaEl) {
+      if (mediaEl && !state.wiredMediaEls.has(mediaEl)) {
+        state.wiredMediaEls.add(mediaEl)
         mediaEl.addEventListener('volumechange', function () { syncMutedToVolume(); emitState() })
       }
-      document.addEventListener('fullscreenchange', emitState)
-      document.addEventListener('webkitfullscreenchange', emitState)
+      if (!state.windowWired) {
+        document.addEventListener('fullscreenchange', emitState)
+        document.addEventListener('webkitfullscreenchange', emitState)
 
-      // Accept commands from the parent. Origin is intentionally not validated here
-      // (mute/fullscreen aren't sensitive, matching the existing ::error channel).
-      // To lock this down, gate on event.origin before calling handleCommand:
-      //   var ALLOWED = ['https://example.com']
-      //   if (ALLOWED.indexOf(event.origin) === -1) return
-      window.addEventListener('message', function (event) {
-        var data
-        try {
-          data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-        } catch (_) {
-          return
-        }
-        if (data && data.method === scope + '::command' && data.params && data.params.action) {
-          handleCommand(data.params.action)
-        }
-      })
+        // Accept commands from the parent. Origin is intentionally not validated here
+        // (mute/fullscreen aren't sensitive, matching the existing ::error channel).
+        // To lock this down, gate on event.origin before calling handleCommand:
+        //   var ALLOWED = ['https://example.com']
+        //   if (ALLOWED.indexOf(event.origin) === -1) return
+        window.addEventListener('message', function (event) {
+          var data
+          try {
+            data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+          } catch (_) {
+            return
+          }
+          if (data && data.method === state.scope + '::command' && data.params && data.params.action) {
+            handleCommand(data.params.action)
+          }
+        })
+
+        state.windowWired = true
+      }
 
       // Report the initial state once the player is up (catches the autoplay-muted
       // start, where the host otherwise can't tell the embed is muted).
       emitState()
 
-      console.debug('[embed-error-events] Error forwarding active for video:', video.uuid)
+      console.debug('[embed-error-events] Player registered for video:', state.videoId)
     }
   })
 }
