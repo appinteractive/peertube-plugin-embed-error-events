@@ -14,6 +14,25 @@
  *   })
  */
 
+/**
+ * The HLS.js instance behind the player. PeerTube >= 7 keeps it in the
+ * p2p-media-loader plugin (and as the Hlsjs tech's `hlsProvider`); older
+ * versions exposed it on the tech directly.
+ */
+function findHls(player) {
+  if (!player) return null
+  try {
+    var loader = typeof player.p2pMediaLoader === 'function' && player.p2pMediaLoader()
+    var fromLoader = loader && typeof loader.getHLSJS === 'function' && loader.getHLSJS()
+    if (fromLoader) return fromLoader
+  } catch (_) {}
+  try {
+    var tech = player.tech({ IWillNotUseThisInPlugins: true })
+    if (tech) return tech.hlsjs || tech.hls || (tech.hlsProvider && tech.hlsProvider.hls) || null
+  } catch (_) {}
+  return null
+}
+
 async function register({ registerHook }) {
   registerHook({
     target: 'action:embed.player.loaded',
@@ -39,12 +58,19 @@ async function register({ registerHook }) {
         }
       }
 
+      // The hook's `videojs` arg is the video.js LIBRARY, not the player: calling
+      // .on()/.error()/.el()/.tech() on it throws or finds nothing, so every error
+      // listener below must hang off the resolved player.
+      var player = resolvePlayer()
+      var mediaEl = (player && typeof player.el === 'function' && player.el() && player.el().querySelector('video')) ||
+        document.querySelector('video')
+
       // --- 1. Video.js player errors (catches all fatal errors including HLS.js bubbled-up) ---
-      // Use try-catch because some PeerTube versions wrap .on() with a WeakMap
-      // that cannot accept string keys, causing "WeakMap key must be an object".
+      // PeerTube gives up after repeated HLS load failures (e.g. an expired file
+      // token) and reports it here as MEDIA_ERR_NETWORK.
       try {
-        videojs.on('error', function () {
-          var err = videojs.error()
+        player.on('error', function () {
+          var err = player.error()
           if (!err) return
 
           notifyParent(scope + '::error', {
@@ -57,19 +83,18 @@ async function register({ registerHook }) {
           })
         })
       } catch (e) {
-        console.debug('[embed-error-events] videojs.on("error") not supported, using native fallback:', e.message)
+        console.debug('[embed-error-events] player.on("error") not supported, using native fallback:', e.message)
       }
 
       // --- 2. Native <video> element errors (fallback for errors video.js doesn't catch) ---
-      var videoEl = videojs.el && videojs.el() && videojs.el().querySelector('video')
-      if (videoEl) {
-        videoEl.addEventListener('error', function () {
-          var err = videoEl.error
+      if (mediaEl) {
+        mediaEl.addEventListener('error', function () {
+          var err = mediaEl.error
           if (!err) return
 
           // Avoid duplicate if video.js already caught this
           try {
-            var vjsErr = videojs.error && videojs.error()
+            var vjsErr = player && player.error()
             if (vjsErr && vjsErr.code === err.code) return
           } catch (_) {
             // videojs.error() may not be available
@@ -87,41 +112,35 @@ async function register({ registerHook }) {
       }
 
       // --- 3. HLS.js errors (best-effort — provides detailed error types) ---
-      try {
-        var hls = null
-        var tech = videojs.tech({ IWillNotUseThisInPlugins: true })
-
-        // PeerTube uses p2p-media-loader which wraps HLS.js.
-        // Try multiple access paths to find the HLS.js instance.
-        if (tech && tech.hlsjs) {
-          hls = tech.hlsjs
-        } else if (tech && tech.hls) {
-          hls = tech.hls
-        } else if (tech && typeof tech.vhs !== 'undefined' && tech.vhs && tech.vhs.playlists) {
-          // VHS/http-streaming tech — no direct HLS.js access
-          hls = null
-        }
-
-        if (hls && typeof hls.on === 'function') {
-          // HLS.js events — Hls.Events.ERROR = 'hlsError'
-          hls.on('hlsError', function (_event, data) {
-            notifyParent(scope + '::error', {
-              fatal: !!data.fatal,
-              type: data.type || 'unknown',
-              details: data.details || '',
-              message: (data.reason || (data.error && data.error.message) || ''),
-              url: data.url || '',
-              httpStatus: (data.response && data.response.code) || null,
-              videoId: video.uuid || ''
-            })
+      // PeerTube usually creates HLS.js after this hook ran (and again for a new
+      // source), announcing it with `hlsjs-initialized`; attach to each instance once.
+      var hlsInstances = []
+      function forwardHlsErrors(hls) {
+        if (!hls || typeof hls.on !== 'function' || hlsInstances.indexOf(hls) !== -1) return
+        hlsInstances.push(hls)
+        // HLS.js events — Hls.Events.ERROR = 'hlsError'
+        hls.on('hlsError', function (_event, data) {
+          notifyParent(scope + '::error', {
+            fatal: !!data.fatal,
+            type: data.type || 'unknown',
+            details: data.details || '',
+            message: (data.reason || (data.error && data.error.message) || ''),
+            url: data.url || '',
+            httpStatus: (data.response && data.response.code) || null,
+            videoId: video.uuid || ''
           })
-          console.debug('[embed-error-events] HLS.js error forwarding active')
-        } else {
-          console.debug('[embed-error-events] HLS.js instance not found — using video.js errors only')
-        }
+        })
+        console.debug('[embed-error-events] HLS.js error forwarding active')
+      }
+
+      try {
+        forwardHlsErrors(findHls(player))
+        player.on('hlsjs-initialized', function (_event, data) {
+          forwardHlsErrors((data && data.hlsjs) || findHls(player))
+        })
       } catch (e) {
-        // Tech access not available (web-video mode, etc.)
-        console.debug('[embed-error-events] Could not access tech layer:', e.message)
+        // No player or tech access (web-video mode, etc.)
+        console.debug('[embed-error-events] Could not access HLS.js:', e.message)
       }
 
       // --- 4. Network state (online/offline) ---
@@ -146,9 +165,7 @@ async function register({ registerHook }) {
       })
 
       // --- 5. Player control commands (parent -> iframe) ---
-      // NOTE: the hook's `videojs` arg is the video.js LIBRARY, not the player —
-      // it has no .muted()/.volume()/.tech(). Resolve the real player; fall back to
-      // the native <video> element for audio ops (verified to unmute on Safari).
+      // Audio ops fall back to the native <video> element (verified to unmute on Safari).
       function resolvePlayer() {
         if (hookPlayer && typeof hookPlayer.muted === 'function') return hookPlayer
         // The embed also exposes the player as window.videojsPlayer (see PeerTube
@@ -171,9 +188,6 @@ async function register({ registerHook }) {
         } catch (_) {}
         return null
       }
-
-      var player = resolvePlayer()
-      var mediaEl = document.querySelector('video')
 
       function isMuted() {
         try { if (player && typeof player.muted === 'function') return !!player.muted() } catch (_) {}
