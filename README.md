@@ -51,6 +51,17 @@ Requires `@peertube/peertube-cli` (`sudo npm install -g @peertube/peertube-cli`)
 
 ## Usage
 
+Opt in to error forwarding in the iframe URL:
+
+```html
+<iframe src="https://your-peertube.com/videos/embed/VIDEO_UUID?api=1&errorEvents=1"></iframe>
+```
+
+Without `errorEvents=1` no `::error` messages are sent, including online/offline
+notifications. The `::state` and `::command` channels work independently.
+Version 2.0.0 makes this opt-in mandatory so the plugin can ship before an updated
+host; already open pages that did not ask for errors stay silent.
+
 Listen for error messages from the embedded PeerTube player in your parent page:
 
 ```javascript
@@ -113,6 +124,10 @@ Messages use the jschannel notification format (same structure the PeerTube embe
 | `httpStatus` | `number?` | HTTP status code (HLS.js network errors only) |
 | `code` | `number?` | MediaError code (Video.js/native errors only) |
 
+PeerTube recovers decode errors (`MEDIA_ERR_3` / `VIDEO_ERR_3`) itself. Hosts should
+treat only `type: 'media'` network (`MEDIA_ERR_2`) and source (`MEDIA_ERR_4`) errors
+as a give-up, rather than treating every fatal HLS.js error as terminal.
+
 ## Player Control (mute / unmute / fullscreen)
 
 Beyond error events, the plugin opens a **parent → iframe command channel** so the
@@ -155,7 +170,10 @@ Safari/iOS notes, and origin-allowlist guidance.
 
 ## How It Works
 
-The plugin registers on the `action:embed.player.loaded` hook and attaches error listeners at multiple layers:
+The plugin registers on the `action:embed.player.loaded` hook. Each window, player,
+media element and HLS.js instance is wired once; repeated hook runs update the
+video id and command target. With `errorEvents=1`, it attaches error listeners at
+multiple layers:
 
 1. **Video.js player errors** -- catches all fatal errors including HLS.js bubbled-up errors
 2. **Native `<video>` element errors** -- fallback for errors Video.js doesn't catch (with deduplication)
@@ -170,13 +188,13 @@ Errors and state are forwarded to `window.parent.postMessage()` in jschannel for
 After installation, open any video embed URL with the API enabled:
 
 ```
-https://your-peertube.com/videos/embed/<VIDEO_UUID>?api=1
+https://your-peertube.com/videos/embed/<VIDEO_UUID>?api=1&errorEvents=1
 ```
 
 Open browser DevTools console and look for:
 
 ```
-[embed-error-events] Error forwarding active for video: <UUID>
+[embed-error-events] Player registered for video: <UUID>
 [embed-error-events] HLS.js error forwarding active
 ```
 

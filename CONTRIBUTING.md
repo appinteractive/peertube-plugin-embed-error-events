@@ -13,7 +13,11 @@ Thanks for your interest in contributing!
 
 ## Testing
 
-There is no build step. The plugin runs plain JavaScript directly. To verify your changes:
+There is no build step. The plugin runs plain JavaScript directly.
+
+`npm test` runs `test/embed.test.mjs` with Node's built-in test runner against fake
+video.js / HLS.js / DOM objects (no PeerTube needed; CI runs it on every push). Add a
+test there for every behaviour change. To verify your changes on a real instance:
 
 1. Install the plugin on a PeerTube instance
 2. Open an embed URL with `?api=1`
