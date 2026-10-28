@@ -1,6 +1,7 @@
 # Lints, tests, then publishes the package to npm when a GitHub release is created.
-# Requires an NPM_TOKEN repository secret (npm automation token with publish rights).
-# See: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
+# Uses npm Trusted Publishing (OIDC): no npm token. The package's trusted publisher on
+# npmjs.com must name this repository and the workflow file npm-publish.yml.
+# See: https://docs.npmjs.com/trusted-publishers
 
 name: Publish to npm
 
@@ -15,8 +16,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -27,13 +28,17 @@ jobs:
   publish-npm:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets npm verify this run instead of a token
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
+          package-manager-cache: false # no shared cache in the job that publishes
+      # Trusted publishing needs npm 11.5.1 or newer
+      - run: npm install -g npm@^11.5.1
       - run: npm ci
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
