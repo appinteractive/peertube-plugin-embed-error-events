@@ -16,8 +16,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -32,11 +32,12 @@ jobs:
       contents: read
       id-token: write # lets npm verify this run instead of a token
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
+          package-manager-cache: false # no shared cache in the job that publishes
       # Trusted publishing needs npm 11.5.1 or newer
       - run: npm install -g npm@^11.5.1
       - run: npm ci
