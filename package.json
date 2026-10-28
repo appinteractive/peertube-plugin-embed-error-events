@@ -2,6 +2,10 @@
   "name": "peertube-plugin-embed-error-events",
   "version": "2.0.0",
   "description": "Forwards video player errors from the embed iframe to the parent window via postMessage, enabling external error handling for embedded PeerTube players.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appinteractive/peertube-plugin-embed-error-events.git"
+  },
   "homepage": "https://github.com/appinteractive/peertube-plugin-embed-error-events",
   "author": {
     "name": "Grzegorz Leoniec",
